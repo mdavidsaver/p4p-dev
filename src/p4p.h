@@ -36,8 +36,6 @@ struct SB {
     }
 };
 
-struct PyExternalRef;
-
 struct borrow {};
 struct allownull {};
 struct nextiter {};
@@ -67,7 +65,6 @@ struct PyRef {
         if(!o)
             throw std::runtime_error("Alloc failed");
     }
-    explicit PyRef(const PyExternalRef& o);
     ~PyRef() {
         Py_CLEAR(obj);
     }
@@ -157,25 +154,6 @@ struct PyLock
     ~PyLock() { PyGILState_Release(state); }
 };
 
-// helper when a PyRef may be free'd outside python code
-// beware of lock ordering wrt. the GIL
-struct PyExternalRef {
-    PyRef ref;
-    PyExternalRef() {}
-    ~PyExternalRef() {
-        if(ref) {
-            PyLock G;
-            ref.reset();
-        }
-    }
-    void swap(PyRef& o) {
-        ref.swap(o);
-    }
-    void swap(PyExternalRef& o) {
-        ref.swap(o.ref);
-    }
-};
-
 #define CATCH() catch(std::exception& e) { if(!PyErr_Occurred()) { PyErr_SetString(PyExc_RuntimeError, e.what()); } }
 
 // enable extremely verbose low level debugging prints.
@@ -202,8 +180,10 @@ std::ostream& show_time(std::ostream&);
 #if PY_MAJOR_VERSION < 3
 // quiet some warnings about implict const char* -> char* cast
 // for API functions.  These are corrected in py >= 3.x
-#define PyObject_CallFunction(O, FMT, ...) PyObject_CallFunction(O, (char*)(FMT), ##__VA_ARGS__)
-#define PyObject_CallMethod(O, METH, FMT, ...) PyObject_CallMethod(O, (char*)(METH), (char*)(FMT), ##__VA_ARGS__)
+#ifndef PyObject_CallFunction
+#  define PyObject_CallFunction(O, FMT, ...) PyObject_CallFunction(O, (char*)(FMT), ##__VA_ARGS__)
+#  define PyObject_CallMethod(O, METH, FMT, ...) PyObject_CallMethod(O, (char*)(METH), (char*)(FMT), ##__VA_ARGS__)
+#endif
 #endif
 
 void p4p_type_register(PyObject *mod);

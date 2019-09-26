@@ -59,24 +59,71 @@ class ntndarray(ntwrappercommon, numpy.ndarray):
 
 class NTNDArray(object):
     """Representation of an N-dimensional array with meta-data
+
+    Translates into `ntndarray`
     """
     Value = Value
     ntndarray = ntndarray
+
+    # map numpy.dtype.char to .value union member name
+    _code2u = {
+        '?':'booleanValue',
+        'b':'byteValue',
+        'h':'shortValue',
+        'i':'intValue',
+        'l':'longValue',
+        'B':'ubyteValue',
+        'H':'ushortValue',
+        'I':'uintValue',
+        'L':'ulongValue',
+        'f':'floatValue',
+        'd':'doubleValue',
+    }
 
     @staticmethod
     def buildType(extra=[]):
         """Build type
         """
         return Type([
-            ('value', 'v'),
+            ('value', ('U', None, [
+                ('booleanValue', 'a?'),
+                ('byteValue', 'ab'),
+                ('shortValue', 'ah'),
+                ('intValue', 'ai'),
+                ('longValue', 'al'),
+                ('ubyteValue', 'aB'),
+                ('ushortValue', 'aH'),
+                ('uintValue', 'aI'),
+                ('ulongValue', 'aL'),
+                ('floatValue', 'af'),
+                ('doubleValue', 'ad'),
+            ])),
+            ('codec', ('S', 'codec_t', [
+                ('name', 's'),
+                ('parameters', 'v'),
+            ])),
+            ('compressedSize', 'l'),
+            ('uncompressedSize', 'l'),
+            ('uniqueId', 'i'),
+            ('dataTimeStamp', timeStamp),
             ('alarm', alarm),
             ('timeStamp', timeStamp),
-            ('dimension', ('aS', None, [
+            ('dimension', ('aS', 'dimension_t', [
                 ('size', 'i'),
+                ('offset', 'i'),
+                ('fullSize', 'i'),
+                ('binning', 'i'),
+                ('reverse', '?'),
             ])),
-            ('attribute', ('aS', None, [
+            ('attribute', ('aS', 'epics:nt/NTAttribute:1.0', [
                 ('name', 's'),
                 ('value', 'v'),
+                ('tags', 'as'),
+                ('descriptor', 's'),
+                ('alarm', alarm),
+                ('timestamp', timeStamp),
+                ('sourceType', 'i'),
+                ('source', 's'),
             ])),
         ], id='epics:nt/NTNDArray:1.0')
 
@@ -86,24 +133,41 @@ class NTNDArray(object):
     def wrap(self, value):
         """Wrap numpy.ndarray as Value
         """
+        attrib = getattr(value, 'attrib', {})
+
         S, NS = divmod(time.time(), 1.0)
-        value = numpy.asarray(value)
+        value = numpy.asarray(value) # loses any special/augmented attributes
         dims = list(value.shape)
         dims.reverse() # inner-most sent as left
 
-        attrib = getattr(value, 'attrib', {})
         if 'ColorMode' not in attrib:
-            attrib['ColorMode'] = 0 if value.ndim==2 else 4 # NDArray::getInfo() treats unknown as RGB3
-        # else: assume caller knows what ColorMode means
+            # attempt to infer color mode from shape
+            if value.ndim==2:
+                attrib['ColorMode'] = 0 # gray
+
+            elif value.ndim==3:
+                for idx,dim in enumerate(dims):
+                    if dim==3: # assume it's a color
+                        attrib['ColorMode'] = 2 + idx  # 2 - RGB1, 3 - RGB2, 4 - RGB3
+                        break # assume that the first is color, and any subsequent dim=3 is a thin ROI
+
+        dataSize = value.nbytes
 
         return Value(self.type, {
-            'value': value.flatten(),
+            'value': (self._code2u[value.dtype.char], value.flatten()),
+            'compressedSize': dataSize,
+            'uncompressedSize': dataSize,
+            'uniqueId': 0,
             'timeStamp': {
                 'secondsPastEpoch': S,
                 'nanoseconds': NS * 1e9,
             },
             'attribute': [{'name': K, 'value': V} for K, V in attrib.items()],
-            'dimension': [{'size': N} for N in dims],
+            'dimension': [{'size': N,
+                           'offset': 0,
+                           'fullSize': N,
+                           'binning': 1,
+                           'reverse': False} for N in dims],
         })
 
     @classmethod
@@ -115,3 +179,8 @@ class NTNDArray(object):
             # Union empty.  treat as zero-length char array
             V = numpy.zeros((0,), dtype=numpy.uint8)
         return V.view(klass.ntndarray)._store(value)
+
+    def assign(self, V, py):
+        """Store python value in Value
+        """
+        V.value = py

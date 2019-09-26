@@ -42,9 +42,9 @@ struct Value {
     // assignment of PVStructure from (possibly unrelated) PVStructure
 
     void store_struct(pvd::PVStructure* fld,
-                      const pvd::Structure* ftype,
+                      pvd::BitSet &changed,
                       const pvd::PVStructure& obj,
-                      const pvd::BitSet::shared_pointer& bset);
+                      const pvd::BitSet::shared_pointer &bset);
 
     void store_union(pvd::PVUnion* fld,
                       const pvd::Union* ftype,
@@ -57,7 +57,7 @@ struct Value {
                        const pvd::BitSet::shared_pointer& bset,
                        bool unpackstruct,
                        bool unpackrecurse=true,
-                       bool asdict=false);
+                       PyObject* wrapper=0);
 };
 
 }//namespace
@@ -77,14 +77,14 @@ struct npmap {
 };
 const npmap np2pvd[] = {
     {NPY_BOOL, pvd::pvBoolean}, // bool stored as one byte
-    {NPY_BYTE, pvd::pvByte},
-    {NPY_SHORT, pvd::pvShort},
-    {NPY_INT, pvd::pvInt},
-    {NPY_LONG, pvd::pvLong},
-    {NPY_UBYTE, pvd::pvUByte},
-    {NPY_USHORT, pvd::pvUShort},
-    {NPY_UINT, pvd::pvUInt},
-    {NPY_ULONG, pvd::pvULong},
+    {NPY_INT8, pvd::pvByte},
+    {NPY_INT16, pvd::pvShort},
+    {NPY_INT32, pvd::pvInt},
+    {NPY_INT64, pvd::pvLong},
+    {NPY_UINT8, pvd::pvUByte},
+    {NPY_UINT16, pvd::pvUShort},
+    {NPY_UINT32, pvd::pvUInt},
+    {NPY_UINT64, pvd::pvULong},
     {NPY_FLOAT, pvd::pvFloat},
     {NPY_DOUBLE, pvd::pvDouble},
     {NPY_NOTYPE}
@@ -124,7 +124,13 @@ void Value::store_struct(pvd::PVStructure* fld,
         }
 
     } else if(PyObject_IsInstance(obj, (PyObject*)P4PValue_type)) {
-        store_struct(fld, ftype, *P4PValue::unwrap(obj).V, bset);
+        Value& W = P4PValue::unwrap(obj);
+        pvd::BitSet changed;
+        if(W.I)
+            changed = *W.I;
+        else
+            changed.set(0);
+        store_struct(fld, changed, *W.V, bset);
 
     } else if(ftype->getID()=="enum_t") {
         // Attempted enumeration assignment
@@ -183,7 +189,7 @@ void Value::store_struct(pvd::PVStructure* fld,
             PyRef temp(PyObject_GetIter(obj));
             iter.swap(temp);
         }catch(std::runtime_error&){
-            PyErr_Format(PyExc_KeyError, "Can't assign \"%s\" from %s : not iterable",
+            PyErr_Format(PyExc_KeyError, "Can't assign sub-structure \"%s\" from %s : expect iterable/list of tuples",
                          fld->getFullName().c_str(), Py_TYPE(obj)->tp_name);
             throw std::runtime_error("not seen");
         }
@@ -214,10 +220,17 @@ void Value::store_struct(pvd::PVStructure* fld,
     }
 }
 
+/* depth-first iteration of 'obj'.
+ * copy each marked field of 'obj' into a field in 'fld'
+ * with the same name, and similar type (or error).
+ * un-marked fields in 'obj' are ignored.
+ *
+ * Neither side is required to be a root (so can't use full name lookup).
+ */
 void Value::store_struct(pvd::PVStructure* fld,
-                         const pvd::Structure* ftype,
+                         pvd::BitSet& changed, // in obj
                          const pvd::PVStructure& obj,
-                         const pvd::BitSet::shared_pointer& bset)
+                         const pvd::BitSet::shared_pointer &bset) // fld
 {
     const pvd::StructureConstPtr& stype = obj.getStructure();
 
@@ -226,7 +239,28 @@ void Value::store_struct(pvd::PVStructure* fld,
     // TODO: getPVFields() breaks const-ness
     const pvd::PVFieldPtrArray& fields = obj.getPVFields();
 
+    const size_t first=obj.getFieldOffset(),
+                 next=obj.getNextFieldOffset();
+
+    if(changed.get(first)) {
+        // expand compressed
+        for(size_t i=first+1, N=next; i<N; i++) {
+            changed.set(i);
+        }
+        changed.clear(first);
+    }
+
+    {
+        pvd::uint32 firstChanged = changed.nextSetBit(first+1);
+        if(firstChanged<0 || firstChanged>=next)
+            return; // nothing to copy in this (sub)struct
+    }
+
     for(size_t i=0, N=names.size(); i<N; i++) {
+        size_t subfirst = changed.nextSetBit(fields[i]->getFieldOffset());
+        if(subfirst<0 || subfirst>=fields[i]->getNextFieldOffset())
+            continue;
+
         pvd::PVFieldPtr dest(fld->getSubField(names[i]));
         if(!dest) {
             PyErr_Format(PyExc_KeyError, "Can't assign non-existant \"%s.%s\"",
@@ -268,7 +302,7 @@ void Value::store_struct(pvd::PVStructure* fld,
         case pvd::structure: {
             pvd::PVStructure* F = static_cast<pvd::PVStructure*>(dest.get());
             pvd::PVStructure* S = static_cast<pvd::PVStructure*>(fields[i].get());
-            store_struct(F, F->getStructure().get(), *S, bset);
+            store_struct(F, changed, *S, bset);
         }
             break;
         case pvd::structureArray: {
@@ -278,13 +312,15 @@ void Value::store_struct(pvd::PVStructure* fld,
             pvd::PVStructureArray::const_svector src(S->view());
             pvd::PVStructureArray::svector dest(src.size());
             const pvd::PVDataCreatePtr& create(pvd::getPVDataCreate());
-            pvd::BitSetPtr nil;
+            pvd::BitSet dummy;
 
             for(size_t i=0, N=src.size(); i<N; i++) {
                 if(!src[i])
                     continue;
                 dest[i] = create->createPVStructure(Ftype);
-                store_struct(dest[i].get(), Ftype.get(), *src[i], nil);
+                dummy.clear();
+                dummy.set(0);
+                store_struct(dest[i].get(), dummy, *src[i], pvd::BitSetPtr());
             }
 
             F->replace(pvd::freeze(dest));
@@ -321,7 +357,7 @@ void Value::store_struct(pvd::PVStructure* fld,
         }
             break;
         default:
-            throw std::runtime_error(SB()<<__FILE__<<":"<<__LINE__<<" Not implemented "<<pvd::TypeFunc::name(ftype->getType()));
+            throw std::runtime_error(SB()<<__FILE__<<":"<<__LINE__<<" Not implemented "<<pvd::TypeFunc::name(dtype->getType()));
         }
     }
 }
@@ -449,7 +485,11 @@ void Value::store_union(pvd::PVUnion* fld,
         } else {
             pvd::PVFieldPtr temp(pvd::getPVDataCreate()->createPVField(val->getField()));
             temp->copyUnchecked(*val);
-            fld->set(temp);
+            try {
+                fld->set(src.getSelectedFieldName(), temp);
+            }catch(std::invalid_argument& e){
+                throw std::runtime_error(SB()<<"Error assigning union \""<<fld->getFullName()<<"\" : "<<e.what());
+            }
         }
 
     } else {
@@ -593,7 +633,7 @@ void Value::storefld(pvd::PVField* fld,
         const pvd::StructureArray* T = static_cast<const pvd::StructureArray*>(ftype);
         const pvd::Structure* ST = T->getStructure().get();
 
-        pvd::PVDataCreatePtr create(pvd::getPVDataCreate());
+        const pvd::PVDataCreatePtr& create = pvd::getPVDataCreate();
         pvd::BitSet::shared_pointer junk;
         pvd::PVStructureArray::svector arr;
 
@@ -632,7 +672,7 @@ void Value::storefld(pvd::PVField* fld,
         pvd::PVUnionArray::svector arr;
         PyRef iter(PyObject_GetIter(obj));
 
-        pvd::PVDataCreatePtr create(pvd::getPVDataCreate());
+        const pvd::PVDataCreatePtr& create = pvd::getPVDataCreate();
 
         while(true) {
             PyRef item(PyIter_Next(iter.get()), nextiter());
@@ -659,7 +699,7 @@ PyObject *Value::fetchfld(pvd::PVField *fld,
                           const pvd::BitSet::shared_pointer& bset,
                           bool unpackstruct,
                           bool unpackrecurse,
-                          bool asdict)
+                          PyObject *wrapper)
 {
     switch(ftype->getType()) {
     case pvd::scalar: {
@@ -740,15 +780,15 @@ PyObject *Value::fetchfld(pvd::PVField *fld,
             PyRef list(PyList_New(vals.size()));
 
             for(size_t i=0; i<vals.size(); i++) {
-                PyRef val(fetchfld(vals[i].get(), flds[i].get(), bset, unpackrecurse, true, asdict));
+                PyRef val(fetchfld(vals[i].get(), flds[i].get(), bset, unpackrecurse, true, wrapper));
 
                 PyRef item(Py_BuildValue("sO", names[i].c_str(), val.get()));
 
                 PyList_SET_ITEM(list.get(), i, item.release());
             }
 
-            if (asdict) {
-                PyRef dict(PyObject_CallFunction((PyObject*) &PyDict_Type, "O", list.release()));
+            if (wrapper) {
+                PyRef dict(PyObject_CallFunction(wrapper, "O", list.get()));
                 return dict.release();
             }
 
@@ -776,7 +816,7 @@ PyObject *Value::fetchfld(pvd::PVField *fld,
                 PyList_SET_ITEM(list.get(), i, Py_None);
 
             } else {
-                PyObject *elem = fetchfld(arr[i].get(), ST, empty, unpackstruct, unpackrecurse, asdict);
+                PyObject *elem = fetchfld(arr[i].get(), ST, empty, unpackstruct, unpackrecurse, wrapper);
 
                 PyList_SET_ITEM(list.get(), i, elem);
             }
@@ -794,7 +834,7 @@ PyObject *Value::fetchfld(pvd::PVField *fld,
         if(!val)
             Py_RETURN_NONE;
         else
-            return fetchfld(val.get(), val->getField().get(), bset, unpackstruct, true, asdict);
+            return fetchfld(val.get(), val->getField().get(), bset, unpackstruct, true, wrapper);
     }
         break;
     case pvd::unionArray: {
@@ -812,7 +852,7 @@ PyObject *Value::fetchfld(pvd::PVField *fld,
             if(!arr[i] || !(val=arr[i]->get())) {
                 ent.reset(Py_None, borrow());
             } else {
-                ent.reset(fetchfld(val.get(), val->getField().get(), empty, unpackstruct, true, asdict));
+                ent.reset(fetchfld(val.get(), val->getField().get(), empty, unpackstruct, true, wrapper));
             }
 
             PyList_SET_ITEM(list.get(), i, ent.release());
@@ -911,11 +951,12 @@ PyObject* P4PValue_getattr(PyObject *self, PyObject *name)
     return NULL;
 }
 
-PyObject* P4PValue_toList(PyObject *self, PyObject *args)
+PyObject* P4PValue_toList(PyObject *self, PyObject *args, PyObject *kws)
 {
     TRY {
+        const char *names[] = {"name", NULL};
         const char *name = NULL;
-        if(!PyArg_ParseTuple(args, "|z", &name))
+        if(!PyArg_ParseTupleAndKeywords(args, kws, "|z", (char**)names, &name))
             return NULL;
 
         pvd::PVFieldPtr fld;
@@ -939,11 +980,13 @@ PyObject* P4PValue_toList(PyObject *self, PyObject *args)
     return NULL;
 }
 
-PyObject* P4PValue_toDict(PyObject *self, PyObject *args)
+PyObject* P4PValue_toDict(PyObject *self, PyObject *args, PyObject *kws)
 {
     TRY {
+        const char *names[] = {"name", "type", NULL};
         const char *name = NULL;
-        if(!PyArg_ParseTuple(args, "|z", &name))
+        PyObject *wrapper = (PyObject*)&PyDict_Type;
+        if(!PyArg_ParseTupleAndKeywords(args, kws, "|zO!", (char**)names, &name, &PyType_Type, &wrapper))
             return NULL;
 
         pvd::PVFieldPtr fld;
@@ -963,7 +1006,7 @@ PyObject* P4PValue_toDict(PyObject *self, PyObject *args)
                              SELF.I,
                              true,
                              true,
-                             true);
+                             wrapper);
 
     }CATCH()
     return NULL;
@@ -1360,12 +1403,12 @@ PyMappingMethods P4PValue_mapping = {
 };
 
 static PyMethodDef P4PValue_methods[] = {
-    {"tolist", (PyCFunction)&P4PValue_toList, METH_VARARGS,
+    {"tolist", (PyCFunction)&P4PValue_toList, METH_VARARGS|METH_KEYWORDS,
      "tolist( [\"fld\"] )\n\n"
      "Recursively transform into a list of tuples."},
-     {"todict", (PyCFunction)&P4PValue_toDict, METH_VARARGS,
-      "todict( [\"fld\"] )\n\n"
-      "Recursively transform into a dictionary."},
+     {"todict", (PyCFunction)&P4PValue_toDict, METH_VARARGS|METH_KEYWORDS,
+      "todict( [\"fld\", type=dict] )\n\n"
+      "Recursively transform into a dictionary (or other type constructable from a list of tuples)."},
     {"items", (PyCFunction)&P4PValue_items, METH_VARARGS,
      "items( [\"fld\"] )\n\n"
      "Transform into a list of tuples.  Not recursive"},
@@ -1432,14 +1475,14 @@ void p4p_value_register(PyObject *mod)
 
     P4PValue::type.tp_methods = P4PValue_methods;
 
-    P4PValue::finishType(mod, "Value");
+    P4PValue::finishType(mod, "ValueBase");
 }
 
 epics::pvData::PVStructure::shared_pointer P4PValue_unwrap(PyObject *obj,
                                                            epics::pvData::BitSet *set)
 {
     if(!PyObject_TypeCheck(obj, &P4PValue::type))
-        throw std::runtime_error("Not a _p4p.Value");
+        throw std::runtime_error("Not a _p4p.ValueBase");
     Value& val = P4PValue::unwrap(obj);
     if(set && val.I)
         *set = *val.I;
@@ -1449,7 +1492,7 @@ epics::pvData::PVStructure::shared_pointer P4PValue_unwrap(PyObject *obj,
 std::tr1::shared_ptr<epics::pvData::BitSet> P4PValue_unwrap_bitset(PyObject *obj)
 {
     if(!PyObject_TypeCheck(obj, &P4PValue::type))
-        throw std::runtime_error("Not a _p4p.Value");
+        throw std::runtime_error("Not a _p4p.ValueBase");
     return P4PValue::unwrap(obj).I;
 }
 
@@ -1459,7 +1502,7 @@ PyObject *P4PValue_wrap(PyTypeObject *type,
 {
     assert(V);
     if(!PyType_IsSubtype(type, &P4PValue::type))
-        throw std::runtime_error("Not a sub-class of _p4p.Value");
+        throw std::runtime_error("Not a sub-class of _p4p.ValueBase");
 
     // magic construction of potentially derived type...
 

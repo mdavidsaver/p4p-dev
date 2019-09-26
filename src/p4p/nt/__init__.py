@@ -23,18 +23,90 @@ __all__ = [
     'NTMultiChannel',
     'NTTable',
     'NTNDArray',
+    'defaultNT',
 ]
 
-_default_unwrap = {
-    "epics:nt/NTScalar:1.0": NTScalar.unwrap,
-    "epics:nt/NTScalarArray:1.0": NTScalar.unwrap,
-    "epics:nt/NTNDArray:1.0": NTNDArray.unwrap,
-}
-_default_wrap = {
-    "epics:nt/NTScalar:1.0": NTScalar.wrap,
-    "epics:nt/NTScalarArray:1.0": NTScalar.wrap,
+_default_nt = {
+    "epics:nt/NTScalar:1.0": NTScalar,
+    "epics:nt/NTScalarArray:1.0": NTScalar,
+    "epics:nt/NTEnum:1.0": NTEnum,
+    "epics:nt/NTNDArray:1.0": NTNDArray,
 }
 
+def defaultNT():
+    """Returns a copy of the default NT helper mappings.
+
+    :since: 3.1.0
+    """
+    return _default_nt.copy()
+
+class UnwrapOnly(object):
+    def __init__(self, unwrap):
+        self.unwrap = unwrap
+    def __call__(self):
+        return self # we are state-less
+    def wrap(self, V):
+        return V
+
+def buildNT(nt=None, unwrap=None):
+    if unwrap is False or nt is False:
+        return ClientUnwrapper({}) # disable use of wrappers
+
+    if unwrap is not None:
+        # legacy
+        ret = {} # ignore new style
+        for ID,fn in (unwrap or {}).items():
+            ret[ID] = UnwrapOnly(fn)
+
+    else:
+        ret = dict(_default_nt)
+        ret.update(nt or {})
+
+    return ClientUnwrapper(ret)
+
+class ClientUnwrapper(object):
+    def __init__(self, nt=None):
+        self.nt = nt
+        self.id = None
+        self._wrap = self._unwrap = lambda x:x
+        self._assign = self._default_assign
+    def wrap(self, val):
+        """Pack a arbitrary python object into a Value
+        """
+        if self.fn is not None:
+            pass
+        return self._wrap(val)
+    def unwrap(self, val):
+        """Unpack a Value as some other python type
+        """
+        if val.getID()!=self.id:
+            self._update(val)
+        return self._unwrap(val)
+
+    def assign(self, V, value):
+        if V.getID()!=self.id:
+            self._update(V)
+        self._assign(V, value)
+
+    def _update(self, val):
+        # type change
+        nt = self.nt.get(val.getID())
+        if nt is not None:
+            nt = nt() # instancate
+            self._wrap, self._unwrap = nt.wrap, nt.unwrap
+            self._assign = nt.assign
+            self.id = val.getID()
+        else:
+            # reset
+            self._wrap = self._unwrap = lambda x:x
+            self._assign = self._default_assign
+
+    def _default_assign(self, V, value):
+        V.value = value # assume NTScalar-like
+
+    def __repr__(self):
+        return '%s(%s)'%(self.__class__.__name__, repr(self.nt))
+    __str__ = __repr__
 
 class NTMultiChannel(object):
 
@@ -150,8 +222,7 @@ class NTTable(object):
 
         :returns: An iterator yielding an OrderedDict for each column
         """
-        if len(value.labels) == 0:
-            return
+        ret = []
 
         # build lists of column names, and value
         lbl, cols = [], []
@@ -162,8 +233,9 @@ class NTTable(object):
         # zip together column arrays to iterate over rows
         for rval in izip(*cols):
             # zip together column names and row values
-            yield OrderedDict(zip(lbl, rval))
+            ret.append(OrderedDict(zip(lbl, rval)))
 
+        return ret
 
 class NTURI(object):
 

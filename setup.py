@@ -13,8 +13,15 @@ from epicscorelibs.config import get_config_var
 
 extra = []
 import sys
+import platform
 if sys.platform=='linux2':
     extra += ['-v']
+elif platform.system()=='Darwin':
+    # avoid later failure where install_name_tool may run out of space.
+    #   install_name_tool: changing install names or rpaths can't be redone for:
+    #   ... because larger updated load commands do not fit (the program must be relinked,
+    #   and you may need to use -headerpad or -headerpad_max_install_names)
+    extra += ['-Wl,-headerpad_max_install_names']
 
 ext = Extension(
     name='p4p._p4p',
@@ -44,7 +51,7 @@ ext = Extension(
 
 setup(
     name='p4p',
-    version='3.0.0',
+    version='3.1.1',
     description="Python interface to PVAccess protocol client",
     url='https://mdavidsaver.github.io/p4p',
     author='Michael Davidsaver',

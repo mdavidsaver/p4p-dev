@@ -142,6 +142,16 @@ class NTScalar(object):
 
     >>> stype = NTScalar.buildType('ad') # vector double
     >>> V = Value(stype, {'value': [4.2, 4.3]})
+
+    The result of `wrap()` is an augmented value object combining
+    `ntwrappercommon` and a python value type (`str`, `int`, `float`, `numpy.ndarray`).
+
+    Agumented values have some additional attributes including:
+
+    * .timestamp - The update timestamp is a float representing seconds since 1 jan 1970 UTC.
+    * .raw_stamp - A tuple of (seconds, nanoseconds)
+    * .severity - An integer in the range [0, 3]
+    * .raw - The complete underlying :class:`~p4p.Value`
     """
     Value = Value
 
@@ -193,6 +203,7 @@ class NTScalar(object):
             })
 
     typeMap = {
+        # TODO: bool
         int: ntint,
         float: ntfloat,
         unicode: ntstr,
@@ -214,6 +225,11 @@ class NTScalar(object):
             return T(value.value)._store(value)
         except Exception as e:
             raise ValueError("Can't construct %s around %s (%s): %s" % (T, value, type(value), e))
+
+    def assign(self, V, py):
+        """Store python value in Value
+        """
+        V.value = py
 
 if sys.version_info < (3, 0):
     class ntlong(ntwrappercommon, long):

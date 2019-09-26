@@ -94,7 +94,7 @@ void py2struct(pvd::FieldBuilderPtr& builder, PyObject *o)
             throw std::runtime_error("XXX");
 
         if(0) {
-        } else if(PyObject_IsInstance(val, (PyObject*)P4PType_type)) {
+        } else if(PyObject_IsInstance(val, (PyObject*)&P4PType::type)) {
             pvd::StructureConstPtr sub(P4PType_unwrap(val));
 
             builder->add(key, sub);
@@ -145,15 +145,20 @@ int P4PType_init(PyObject *self, PyObject *args, PyObject *kwds)
 {
     PyObject *spec;
     const char *id = NULL;
-    static const char *names[] = {"spec", "id", NULL};
+    PyObject *base = Py_None;
+    static const char *names[] = {"spec", "id", "base", NULL};
     TRY {
         if(SELF.get())
             return 0; // magic case when called from P4PType_wrap()
 
-        if(!PyArg_ParseTupleAndKeywords(args, kwds, "O|z", (char**)names, &spec, &id))
+        if(!PyArg_ParseTupleAndKeywords(args, kwds, "O|zO!", (char**)names, &spec, &id, (PyObject*)&P4PType::type, &base))
             return -1;
 
-        pvd::FieldBuilderPtr builder(pvd::getFieldCreate()->createFieldBuilder());
+        pvd::FieldBuilderPtr builder;
+        if(base==Py_None)
+            builder = pvd::getFieldCreate()->createFieldBuilder();
+        else
+            builder = pvd::getFieldCreate()->createFieldBuilder(P4PType::unwrap(base));
         if(id)
             builder->setId(id);
         py2struct(builder, spec);
@@ -432,14 +437,14 @@ void p4p_type_register(PyObject *mod)
 
     P4PType::type.tp_methods = P4PType_members;
 
-    P4PType::finishType(mod, "Type");
+    P4PType::finishType(mod, "TypeBase");
 }
 
 PyObject* P4PType_wrap(PyTypeObject *type, const epics::pvData::Structure::const_shared_pointer& S)
 {
     assert(S.get());
     if(!PyType_IsSubtype(type, &P4PType::type))
-        throw std::runtime_error("Not a sub-class of _p4p.Type");
+        throw std::runtime_error("Not a sub-class of _p4p.TypeBase");
 
     // magic construction of potentially derived type...
 
@@ -468,6 +473,8 @@ epics::pvData::Field::const_shared_pointer P4PType_guess(PyObject *obj)
     pvd::FieldCreatePtr create(pvd::getFieldCreate());
 
     if(0) {
+    } else if(PyBool_Check(obj)) {
+        return create->createScalar(pvd::pvBoolean);
 #if PY_MAJOR_VERSION < 3
     } else if(PyInt_Check(obj)) {
         return create->createScalar(pvd::pvInt);
@@ -478,20 +485,23 @@ epics::pvData::Field::const_shared_pointer P4PType_guess(PyObject *obj)
         return create->createScalar(pvd::pvDouble);
     } else if(PyBytes_Check(obj) || PyUnicode_Check(obj)) {
         return create->createScalar(pvd::pvString);
+    } else if(PyList_Check(obj)) {
+        return create->createScalarArray(pvd::pvString);
     } else if(PyArray_Check(obj)) {
         switch(PyArray_TYPE(obj)) {
 #define CASE(NTYPE, PTYPE) case NTYPE: return create->createScalarArray(PTYPE);
         CASE(NPY_BOOL, pvd::pvBoolean) // bool stored as one byte
-        CASE(NPY_BYTE, pvd::pvByte)
-        CASE(NPY_SHORT, pvd::pvShort)
-        CASE(NPY_INT, pvd::pvInt)
-        CASE(NPY_LONG, pvd::pvLong)
-        CASE(NPY_UBYTE, pvd::pvUByte)
-        CASE(NPY_USHORT, pvd::pvUShort)
-        CASE(NPY_UINT, pvd::pvUInt)
-        CASE(NPY_ULONG, pvd::pvULong)
+        CASE(NPY_INT8, pvd::pvByte)
+        CASE(NPY_INT16, pvd::pvShort)
+        CASE(NPY_INT32, pvd::pvInt)
+        CASE(NPY_INT64, pvd::pvLong)
+        CASE(NPY_UINT8, pvd::pvUByte)
+        CASE(NPY_UINT16, pvd::pvUShort)
+        CASE(NPY_UINT32, pvd::pvUInt)
+        CASE(NPY_UINT64, pvd::pvULong)
         CASE(NPY_FLOAT, pvd::pvFloat)
         CASE(NPY_DOUBLE, pvd::pvDouble)
+        CASE(NPY_STRING, pvd::pvString)
 #undef CASE
         }
     }

@@ -233,7 +233,8 @@ class Context(raw.Context):
     :param bool useenv: Allow the provider to use configuration from the process environment.
     :param int workers: Size of thread pool in which monitor callbacks are run.  Default is 4
     :param int maxsize: Size of internal work queue used for monitor callbacks.  Default is unlimited
-    :param callable unwrap: Controls :ref:`unwrap`.  Set False to disable
+    :param dict nt: Controls :ref:`unwrap`.  None uses defaults.  Set False to disable
+    :param dict unwrap: Legacy :ref:`unwrap`.
     :param WorkQueue queue: A work queue through which monitor callbacks are dispatched.
 
     The methods of this Context will block the calling thread until completion or timeout
@@ -254,11 +255,11 @@ class Context(raw.Context):
     name = ''
     "Provider name string"
 
-    def __init__(self, provider, conf=None, useenv=True, unwrap=None,
+    def __init__(self, provider, conf=None, useenv=True, nt=None, unwrap=None,
                  maxsize=0, queue=None):
         self._channel_lock = threading.Lock()
 
-        super(Context, self).__init__(provider, conf=conf, useenv=useenv, unwrap=unwrap)
+        super(Context, self).__init__(provider, conf=conf, useenv=useenv, nt=nt, unwrap=unwrap)
 
         # lazy start threaded WorkQueue
         self._Q = self._T = None
@@ -370,17 +371,19 @@ class Context(raw.Context):
             return result
 
     def put(self, name, values, request=None, timeout=5.0, throw=True,
-            process=None, wait=None):
+            process=None, wait=None, get=True):
         """Write a new value of some number of PVs.
 
         :param name: A single name string or list of name strings
-        :param values: A single value or a list of values
+        :param values: A single value, a list of values, a dict, a `Value`.  May be modified by the constructor nt= argument.
         :param request: A :py:class:`p4p.Value` or string to qualify this request, or None to use a default.
         :param float timeout: Operation timeout in seconds
         :param bool throw: When true, operation error throws an exception.
                      If False then the Exception is returned instead of the Value
         :param str process: Control remote processing.  May be 'true', 'false', 'passive', or None.
         :param bool wait: Wait for all server processing to complete.
+        :param bool get: Whether to do a Get before the Put.  If True then the value passed to the builder callable
+                         will be initialized with recent PV values.  eg. use this with NTEnum to find the enumeration list.
 
         :returns: A None or Exception, or list of same
 
@@ -440,7 +443,7 @@ class Context(raw.Context):
                     except:
                         _log.exception("Error queuing put result %s", LazyRepr(value))
 
-                ops[i] = raw_put(n, cb, builder=value, request=req)
+                ops[i] = raw_put(n, cb, builder=value, request=req, get=get)
 
             for _n in range(len(name)):
                 try:
