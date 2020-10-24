@@ -7,7 +7,6 @@ import json
 import weakref
 import threading
 
-raise unittest.SkipTest('Not yet implemented')
 try:
     from Queue import Queue, Full, Empty
 except ImportError:
@@ -19,8 +18,9 @@ except ImportError:
     from cString import StringIO
 
 from .utils import RefTestCase, RegularNamedTemporaryFile as NamedTemporaryFile
-from ..server import Server, StaticProvider, removeProvider
+from ..server import Server, StaticProvider
 from ..server.thread import SharedPV, _defaultWorkQueue
+from ..client import raw
 from ..client.thread import Context, Disconnected, TimeoutError, RemoteError
 from ..nt import NTScalar
 from ..gw import App, main, getargs
@@ -34,15 +34,14 @@ class TestGC(RefTestCase):
         class Dummy(object):
             pass
         H = Dummy()
-        CLI = _gw.Client(u'pva', {'EPICS_PVA_BROADCAST_PORT': '0',
-                                  'EPICS_PVA_SERVER_PORT': '0',
-                                  'EPICS_PVAS_INTF_ADDR_LIST': '127.0.0.1',
-                                  'EPICS_PVA_ADDR_LIST': '127.0.0.1',
-                                  'EPICS_PVA_AUTO_ADDR_LIST': '0'})
+        CLI = raw.Context(conf={'EPICS_PVA_BROADCAST_PORT': '0',
+                                'EPICS_PVA_SERVER_PORT': '0',
+                                'EPICS_PVAS_INTF_ADDR_LIST': '127.0.0.1',
+                                'EPICS_PVA_ADDR_LIST': '127.0.0.1',
+                                'EPICS_PVA_AUTO_ADDR_LIST': '0'})
         GW = _gw.Provider(u'nulltest', CLI, H)
-        removeProvider(u'nulltest')
 
-        self.assertEqual(GW.use_count(), 1)
+        self.assertEqual(GW.use_count(), 2) # one for Provider, one for Source base class
 
         h = weakref.ref(H)
         gw = weakref.ref(GW)
@@ -58,18 +57,15 @@ class TestGC(RefTestCase):
         class Dummy(object):
             pass
         H = Dummy()
-        CLI = _gw.Client(u'pva', {'EPICS_PVA_BROADCAST_PORT': '0',
-                                  'EPICS_PVA_SERVER_PORT': '0',
-                                  'EPICS_PVAS_INTF_ADDR_LIST': '127.0.0.1',
-                                  'EPICS_PVA_ADDR_LIST': '127.0.0.1',
-                                  'EPICS_PVA_AUTO_ADDR_LIST': '0'})
+        CLI = raw.Context(conf={'EPICS_PVA_BROADCAST_PORT': '0',
+                                'EPICS_PVA_SERVER_PORT': '0',
+                                'EPICS_PVAS_INTF_ADDR_LIST': '127.0.0.1',
+                                'EPICS_PVA_ADDR_LIST': '127.0.0.1',
+                                'EPICS_PVA_AUTO_ADDR_LIST': '0'})
         GW = _gw.Provider(u'nulltest', CLI, H)
 
-        try:
-            with Server(providers=['nulltest'], isolate=True):
-                self.assertFalse(GW.testChannel(b'invalid:pv:name'))
-        finally:
-            removeProvider(u'nulltest')
+        with Server(providers=[GW], isolate=True):
+            self.assertFalse(GW.testChannel(b'invalid:pv:name'))
 
         h = weakref.ref(H)
         gw = weakref.ref(GW)
@@ -82,7 +78,7 @@ class TestGC(RefTestCase):
         self.assertIsNone(gw())
 
 class TestLowLevel(RefTestCase):
-    timeout = 1
+    timeout = 5
 
     class Handler(object):
         def testChannel(self, pvname, peer):
@@ -92,7 +88,7 @@ class TestLowLevel(RefTestCase):
                 ret = self.provider.testChannel(b'pv:name')
             else:
                 ret = self.provider.BanPV
-            _log.debug("GW Search %s from %s -> %s", pvname, peer, ret)
+            _log.debug("GW Search %r from %r -> %s", pvname, peer, ret)
             return ret
 
         def makeChannel(self, op):
@@ -130,16 +126,11 @@ class TestLowLevel(RefTestCase):
         # GW client side
         # placed weakref in global registry
         H = self.Handler()
-        CLI = _gw.Client(u'pva', self._us_server.conf())
+        CLI = raw.Context(u'pva', self._us_server.conf())
         H.provider = self.gw = _gw.Provider(u'gateway', CLI, H)
 
-        try:
-            # GW server side
-            self._ds_server = Server(providers=['gateway'], isolate=True)
-        finally:
-            # don't need this in the global registry anymore.
-            # Server holds strong ref.
-            removeProvider(u'gateway')
+        # GW server side
+        self._ds_server = Server(providers=[H.provider], isolate=True)
 
         # downstream client
         self._ds_client = Context('pva', conf=self._ds_server.conf(), useenv=False)
@@ -158,7 +149,7 @@ class TestLowLevel(RefTestCase):
         _defaultWorkQueue.sync()
         gc.collect()
 
-        self.assertEqual(self.gw.use_count(), 1)
+        self.assertEqual(self.gw.use_count(), 2)
         gw = weakref.ref(self.gw)
         del self.gw
         gc.collect()
