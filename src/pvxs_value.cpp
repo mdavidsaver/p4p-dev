@@ -447,7 +447,7 @@ void storePy(Value& v, PyObject* py)
         if(v.type()==TypeCode::StructA || v.type()==TypeCode::UnionA) {
 
             if(!PySequence_Check(py))
-                throw std::runtime_error("XXX");
+                throw std::runtime_error(SB()<<"Must assign sequence to struct/union array, not "<<Py_TYPE(py)->tp_name);
 
             shared_array<Value> arr(PySequence_Size(py));
 
@@ -465,7 +465,7 @@ void storePy(Value& v, PyObject* py)
         } else if(v.type()==TypeCode::AnyA) {
 
             if(!PySequence_Check(py))
-                throw std::runtime_error("XXX");
+                throw std::runtime_error(SB()<<"Must assign sequence to variant union (any) array, not "<<Py_TYPE(py)->tp_name);
 
             shared_array<Value> arr(PySequence_Size(py));
 
@@ -481,7 +481,7 @@ void storePy(Value& v, PyObject* py)
         } else if(v.type()==TypeCode::StringA) {
 
             if(!PySequence_Check(py))
-                throw std::runtime_error("XXX");
+                throw std::runtime_error(SB()<<"Must assign sequence to string array, not "<<Py_TYPE(py)->tp_name);
 
             shared_array<std::string> arr(PySequence_Size(py));
 

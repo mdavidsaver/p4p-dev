@@ -347,7 +347,9 @@ class GWStats(object):
                 statsSum[key] += stat[key]
         self.statsPV.post(statsType(statsSum))
 
-        self.cachePV.post(reduce(set.__or__, [handler.provider.cachePeek() for handler in self.handlers], set()))
+        cachepvs = list(reduce(set.__or__, [handler.provider.cachePeek() for handler in self.handlers], set()))
+        cachepvs.sort()
+        self.cachePV.post(cachepvs)
 
         T1 = time.time()
 
@@ -540,7 +542,7 @@ class App(object):
             if args.test_config:
                 clients[name] = None
             else:
-                clients[name] = _gw.Client(jcli.get('provider', u'pva'), client_conf)
+                clients[name] = Context(jcli.get('provider', u'pva'), client_conf)
 
         servers = self.servers = {}
 
@@ -611,9 +613,7 @@ class App(object):
 
             ctxt = None
             if aclient is not None and not args.test_config:
-                acli = clients[aclient]
-                with acli.installAs('gwcli.'+aclient):
-                    ctxt = Context('gwcli.'+aclient)
+                ctxt = clients[aclient]
 
             access = readnproc(args, jsrv.get('access', ''), Engine, ctxt=ctxt)
             pvlist = readnproc(args, jsrv.get('pvlist', ''), PVList)
@@ -633,7 +633,6 @@ class App(object):
             try:
                 for client in jsrv['clients']:
                     pname = u'gws.%s.%s'%(name, client)
-                    providers.append(pname)
 
                     client = clients[client]
 
@@ -642,6 +641,7 @@ class App(object):
 
                     if not args.test_config:
                         handler.provider = _gw.Provider(pname, client, handler) # implied installProvider()
+                        providers.append(handler.provider)
 
                     # prevent client from searching on ignored addresses
                     for addr in ignored_addresses:
