@@ -5,14 +5,18 @@
 
 #include "p4p.h"
 
+#include <epicsThread.h>
+
 #include <pvxs/source.h>
 #include <pvxs/sharedpv.h>
 #include <pvxs/client.h>
+#include <pvxs/util.h>
 
 namespace p4p {
 using namespace pvxs;
 
 struct GWChan;
+struct GWSource;
 
 enum GWSearchResult {
     GWSearchIgnore,
@@ -58,7 +62,9 @@ struct GWUpstream {
 
     bool gcmark = false;
 
-    GWUpstream(const std::string& usname, client::Context& ctxt);
+    const std::shared_ptr<MPMCFIFO<std::function<void()>>> workQ;
+
+    explicit GWUpstream(const std::string& usname, const struct GWSource& src);
 };
 
 struct GWChan {
@@ -88,7 +94,8 @@ struct GWChan {
 };
 
 struct GWSource : public server::Source,
-                  public std::enable_shared_from_this<GWSource>
+                  public std::enable_shared_from_this<GWSource>,
+                  private epicsThreadRunable
 {
     client::Context upstream;
 
@@ -102,13 +109,16 @@ struct GWSource : public server::Source,
     // channel cache.  Indexed by upstream name
     std::map<std::string, std::shared_ptr<GWUpstream>> channels;
 
+    decltype (GWUpstream::workQ) workQ;
+
+    epicsThread workQworker;
+
     static
     std::shared_ptr<GWSource> build(const client::Context& ctxt) {
         return std::shared_ptr<GWSource>(new GWSource(ctxt));
     }
-    GWSource(const client::Context& ctxt)
-        :upstream(ctxt)
-    {}
+    GWSource(const client::Context& ctxt);
+    virtual ~GWSource();
 
     // for server::Source
     virtual void onSearch(Search &op) override final;
@@ -126,6 +136,8 @@ struct GWSource : public server::Source,
     void clearBan();
 
     void cachePeek(std::set<std::string> &names) const;
+
+    virtual void run() override final;
 };
 
 } // namespace p4p

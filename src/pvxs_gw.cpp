@@ -13,6 +13,21 @@ DEFINE_LOGGER(_log, "p4p.gw");
 
 namespace p4p {
 
+GWSource::GWSource(const client::Context& ctxt)
+    :upstream(ctxt)
+    ,workQ(std::make_shared<decltype(workQ)::element_type>())
+    ,workQworker(*this, "GWQ",
+                 epicsThreadGetStackSize(epicsThreadStackBig),
+                 epicsThreadPriorityMedium)
+{
+    workQworker.start();
+}
+
+GWSource::~GWSource() {
+    workQ->push(nullptr);
+    workQworker.exitWait();
+}
+
 void GWSource::onSearch(Search &op)
 {
     // on server worker
@@ -71,9 +86,9 @@ void GWSource::onSearch(Search &op)
     }
 }
 
-GWUpstream::GWUpstream(const std::string& usname, client::Context& ctxt)
+GWUpstream::GWUpstream(const std::string& usname, const GWSource &src)
     :usname(usname)
-    ,upstream(ctxt)
+    ,upstream(src.upstream)
     ,connector(upstream.connect(usname)
                .onDisconnect([this]()
                 {
@@ -85,6 +100,7 @@ GWUpstream::GWUpstream(const std::string& usname, client::Context& ctxt)
                     }
                 })
                .exec())
+    ,workQ(src.workQ)
 {}
 
 GWChan::GWChan(const std::string& dsname, const std::shared_ptr<GWUpstream>& upstream, const std::shared_ptr<server::ChannelControl> &dschannel)
@@ -313,6 +329,54 @@ void GWChan::onOp(const std::shared_ptr<GWChan>& pv, std::unique_ptr<server::Con
     }
 }
 
+static
+void onSubEvent(const std::shared_ptr<GWSubscription>& sub, const std::shared_ptr<GWChan>& pv)
+{
+    // on workQworker
+    auto cli(sub->upstream.lock());
+    if(!cli)
+        return;
+
+    log_debug_printf(_log, "'%s' MONITOR wakeup\n", cli->name().c_str());
+
+    for(unsigned i=0; i<4u; i++) {
+        try {
+            auto val(cli->pop());
+            if(!val)
+                return; // queue emptied
+
+            log_debug_printf(_log, "'%s' MONITOR event\n", cli->name().c_str());
+
+            Guard G(pv->us->lock);
+            if(!sub->current)
+                sub->current = val; // first update
+            else
+                sub->current.assign(val); // accumulate deltas
+
+            for(auto& ctrl : sub->controls)
+                ctrl->post(val);
+
+         } catch(client::Finished&) {
+            log_debug_printf(_log, "'%s' MONITOR finish\n", cli->name().c_str());
+
+            Guard G(pv->us->lock);
+            pv->us->subscription.reset();
+            for(auto& ctrl : sub->controls)
+                ctrl->finish();
+
+         } catch(std::exception& e) {
+            log_warn_printf(_log, "'%s' MONITOR error: %s\n",
+                            cli->name().c_str(), e.what());
+         }
+    }
+
+    log_debug_printf(_log, "'%s' MONITOR resched\n", cli->name().c_str());
+
+    // queue not empty, reschedule for later to give other subscriptions a chance
+    pv->us->workQ->push([sub, pv](){ onSubEvent(sub, pv); });
+    // TODO: blocking here would deadlock...
+}
+
 void GWChan::onSubscribe(const std::shared_ptr<GWChan>& pv, std::unique_ptr<server::MonitorSetupOp>&& sop)
 {
     // on server worker
@@ -396,36 +460,7 @@ void GWChan::onSubscribe(const std::shared_ptr<GWChan>& pv, std::unique_ptr<serv
 
             log_debug_printf(_log, "'%s' MONITOR wakeup\n", cli.name().c_str());
 
-            while(true) {
-                // TODO: move to worker
-                try {
-                    auto val(cli.pop());
-                    if(!val)
-                        break;
-                    log_debug_printf(_log, "'%s' MONITOR event\n", cli.name().c_str());
-
-                    Guard G(pv->us->lock);
-                    if(!sub->current)
-                        sub->current = val; // first update
-                    else
-                        sub->current.assign(val); // accumulate deltas
-
-                    for(auto& ctrl : sub->controls)
-                        ctrl->post(val);
-
-                 } catch(client::Finished&) {
-                    log_debug_printf(_log, "'%s' MONITOR finish\n", cli.name().c_str());
-
-                    Guard G(pv->us->lock);
-                    pv->us->subscription.reset();
-                    for(auto& ctrl : sub->controls)
-                        ctrl->finish();
-
-                 } catch(std::exception& e) {
-                    log_warn_printf(_log, "'%s' MONITOR error: %s\n",
-                                    cli.name().c_str(), e.what());
-                 }
-            }
+            pv->us->workQ->push([sub, pv]() { onSubEvent(sub, pv); });
         });
 
         // syncs client worker with server worker
@@ -500,7 +535,7 @@ GWSearchResult GWSource::test(const std::string &usname)
                      (it==channels.end()) ? "miss" : "hit");
     if(it==channels.end()) {
 
-        auto chan(std::make_shared<GWUpstream>(usname, upstream));
+        auto chan(std::make_shared<GWUpstream>(usname, *this));
 
         auto pair = channels.insert(std::make_pair(usname, chan));
         assert(pair.second); // we already checked
@@ -565,5 +600,20 @@ void GWSource::forceBan(const std::string& host, const std::string& usname) {}
 void GWSource::clearBan() {}
 
 void GWSource::cachePeek(std::set<std::string> &names) const {}
+
+void GWSource::run()
+{
+    while(auto work = workQ->pop()) {
+        if(!work)
+            break; // NULL means stop
+
+        try {
+            work();
+        }catch(std::exception &e) {
+            log_exc_printf(_log, "Unhandled exception from workQ: %s : %s\n",
+                           work.target_type().name(), e.what());
+        }
+    }
+}
 
 } // namespace p4p
