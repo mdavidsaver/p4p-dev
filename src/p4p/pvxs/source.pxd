@@ -28,7 +28,6 @@ cdef extern from "<pvxs/source.h>" namespace "pvxs::server" nogil:
 
     cdef cppclass OpBase:
         const string& peerName() const
-        const string& ifaceName() const
         const string& name() const
         const shared_ptr[const ClientCredentials]& credentials() const
 

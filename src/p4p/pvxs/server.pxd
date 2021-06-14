@@ -14,6 +14,8 @@ from .sharedpv cimport SharedPV
 cdef extern from "<pvxs/server.h>" namespace "pvxs::server" nogil:
     ctypedef map[string, string] Config_defs_t "pvxs::server::Config::defs_t"
 
+    ctypedef client.Report Report
+
     cdef cppclass Config:
         vector[string] interfaces
         vector[string] beaconDestinations
@@ -57,3 +59,5 @@ cdef extern from "<pvxs/server.h>" namespace "pvxs::server" nogil:
         shared_ptr[Source] getSource(const string& name, int order =0) except+
 
         vector[pair[string, int]] listSource() except+
+
+        Report report() except+

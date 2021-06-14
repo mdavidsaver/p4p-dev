@@ -539,8 +539,11 @@ cdef class ClientProvider:
             self.ctxt = client.Context()
 
     def disconnect(self, basestring name=None):
+        cdef string cname
+        if name is not None:
+            cname = name
         with nogil:
-            self.ctxt.cacheClear()
+            self.ctxt.cacheClear(cname)
 
     @staticmethod
     def makeRequest(basestring desc):
@@ -556,9 +559,6 @@ cdef class ClientProvider:
 _providers = {}
 
 cdef class Server:
-    cdef server.Server serv
-    cdef object __weakref__
-
     def __init__(self, conf=None, useenv=True, providers=None):
         cdef server.Config sconf
         cdef server.Config_defs_t defs
@@ -708,12 +708,13 @@ cdef class ServerOperation:
         return self.op.get().peerName().decode()
 
     def account(self):
-        # TODO: cf. rawCredentials()
-        raise NotImplementedError()
+        return self.op.get().credentials().get().account.decode()
 
     def roles(self):
-        # TODO: cf. rawCredentials()
-        raise NotImplementedError()
+        ret = set()
+        for role in self.op.get().credentials().get().roles():
+            ret.add(role.decode())
+        return ret
 
     def done(self, _Value value=None, basestring error=None):
         cdef string msg

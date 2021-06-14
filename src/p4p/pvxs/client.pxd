@@ -3,6 +3,7 @@
 from libcpp cimport bool
 from libcpp.string cimport string
 from libcpp.map cimport map
+from libcpp.list cimport list as clist
 from libcpp.vector cimport vector
 from libcpp.memory cimport shared_ptr
 #from libcpp.functional cimport function
@@ -50,7 +51,9 @@ cdef extern from "<pvxs/client.h>" namespace "pvxs::client" nogil:
         RequestBuilder request() except+
 
         void hurryUp() except+
-        void cacheClear() except+
+        void cacheClear(const string&) except+
+
+        Report report() except+
 
     cdef cppclass GetBuilder:
         GetBuilder& field(const string& fld) except+
@@ -114,3 +117,19 @@ cdef extern from "<pvxs/client.h>" namespace "pvxs::client" nogil:
 
     cdef cppclass Operation:
         bool cancel() except+
+
+
+    # really netcommon.h, but can't include this directly
+    cdef cppclass Channel "pvxs::client::Report::Channel":
+        string name
+        size_t tx
+        size_t rx
+
+    cdef cppclass Connection "pvxs::client::Report::Connection":
+        string peer
+        size_t tx
+        size_t rx
+        clist[Channel] channels
+
+    cdef cppclass Report:
+        clist[Connection] connections

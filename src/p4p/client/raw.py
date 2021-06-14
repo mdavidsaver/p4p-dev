@@ -173,7 +173,6 @@ class Context(object):
             return
         self._ctxt.close()
         self._ctxt = None
-        self.disconnect()
 
         _all_contexts.discard(self)
 
@@ -193,7 +192,7 @@ class Context(object):
 
         :param str name: None, to clear the entire cache, or a name string to clear only a certain entry.
         """
-        warnings.warn("force disconect() not implemented")
+        self._ctxt.disconnect(name)
 
     def _request(self, process=None, wait=None):
         """helper for building pvRequests
