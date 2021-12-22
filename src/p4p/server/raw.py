@@ -149,14 +149,17 @@ class SharedPV(_SharedPV):
 
         _SharedPV.open(self, self._wrap(value))
 
-    def post(self, value):
+    def post(self, value, **kws):
         """Provide an update to the Value of this PV.
 
         :param value:  A Value, or appropriate object (see nt= and wrap= of the constructor).
 
         Only those fields of the value which are marked as changed will be stored.
+
+        Any keyword arguments are forwarded to the NT wrap() method (if applicable).
+        Common arguments include: timestamp= , severity= , and message= .
         """
-        _SharedPV.post(self, self._wrap(value))
+        _SharedPV.post(self, self._wrap(value, **kws))
 
     def current(self):
         return self._unwrap(_SharedPV.current(self))
