@@ -120,7 +120,8 @@ class SharedPV(_SharedPV):
     """
 
     def __init__(self, handler=None, initial=None,
-                 nt=None, wrap=None, unwrap=None, **kws):
+                 nt=None, wrap=None, unwrap=None,
+                 options=None, **kws):
         self.nt = nt
         self._handler = handler or self._DummyHandler()
         self._whandler = self._WrapHandler(self, self._handler)
@@ -128,11 +129,11 @@ class SharedPV(_SharedPV):
         self._wrap = wrap or (nt and nt.wrap) or (lambda x: x)
         self._unwrap = unwrap or (nt and nt.unwrap) or (lambda x: x)
 
-        _SharedPV.__init__(self, self._whandler, **kws)
+        _SharedPV.__init__(self, self._whandler, options)
         if initial is not None:
-            self.open(initial, nt=nt, wrap=wrap, unwrap=unwrap)
+            self.open(initial, nt=nt, wrap=wrap, unwrap=unwrap, **kws)
 
-    def open(self, value, nt=None, wrap=None, unwrap=None):
+    def open(self, value, nt=None, wrap=None, unwrap=None, **kws):
         """Mark the PV as opened an provide its initial value.
         This initial value is later updated with post().
 
@@ -147,7 +148,7 @@ class SharedPV(_SharedPV):
         self._wrap = wrap or (nt and nt.wrap) or self._wrap
         self._unwrap = unwrap or (nt and nt.unwrap) or self._unwrap
 
-        _SharedPV.open(self, self._wrap(value))
+        _SharedPV.open(self, self._wrap(value, **kws))
 
     def post(self, value, **kws):
         """Provide an update to the Value of this PV.

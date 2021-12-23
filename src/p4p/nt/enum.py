@@ -97,6 +97,10 @@ class NTEnum(NTBase):
                 if py==C:
                     V['value.index'] = i
                     return
+            # attempt to parse as integer
+            py = int(py, 0)
+        else:
+            # attempt to cast as integer
+            py = int(py)
 
-        # attempt to parse as integer
         V['value.index'] = py
