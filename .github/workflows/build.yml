@@ -314,7 +314,7 @@ jobs:
           which python
           python -m pip install -U pip
           python -m pip install setuptools wheel nose2
-          python -m pip install $PRE setuptools-dso epicscorelibs
+          python -m pip install $PRE --only-binary numpy setuptools-dso epicscorelibs
           if [ "${{ matrix.profile }}" ]
           then
             python -m pip install -r requirements-${{ matrix.profile }}.txt
