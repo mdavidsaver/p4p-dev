@@ -37,6 +37,7 @@ which sits between groups of PVA clients and servers.  (see `overviewpva`)
 
 .. graph:: nogw
     :caption: PVA Connections without a Gateway
+
     rankdir="RL";
     serv1 [shape=box,label="EPICS IOC"];
     serv2 [shape=box,label="PVA server"];
@@ -82,8 +83,9 @@ Further, a Gateway de-duplicates subscription data updates
 so that each server sends only a single update to the Gateway,
 which then repeats it to each client.
 
-This structure shields the servers from an excessive number of clients.
-The Gateway is essentially invisible to both clients and servers.
+So the PVA servers and IOCs see only a single client,
+and are shielded from a potentially large number of clients on
+the other side of the gateway.
 
 .. note::
     Each gateway process can define multiple internal Servers and Clients.
@@ -168,17 +170,18 @@ The interface broadcast address is also provided to enable sending of server bea
 This is an optimization to reduce connection time, and it is not required.
 
 The *statusprefix* value is set to ``GW:STS:`` in this example, allowing the gateway to share some internal PVs which provide status information.
-The PV name suffixes are described below, and the *statusprefix* is prepended to each of them to support sites with multiple gateways.
-See `gwstatuspvs` for details.
+The :ref:`gwstatuspvs` suffixes are described below, with the *statusprefix* prepended.
+Sites with multiple gateways on one subnet should give each a unique statusprefix.
 
 A second *servers* section is shown, with its *name* set to ``server192``.  Its set of allowed *clients* is empty, but interfaces and address lists are specified.
 This allows the status PVs mentioned above to be accessed from the subnet hosting the IOCs and other EPICS servers.
 Without this section, those status PVs are only accessible from EPICS clients on the client subnets.
 
 .. note::
-    That part of the gateway which connects to IOCs as a Client, could potentially connect back to its own Server which expects client connections.
-    The gateway disables its internal Client from connecting to its internal Server.
-    If this is somehow required, such as a "chaining" scenario, then it will be necessary to split a configuration into more than one gateway instance.
+    A single gateway will not connect to itself (no Gateway client will connect to a Gateway server in the same instance).
+    However, this automatic loop avoidance is not possible in more complex situations involving multiple gateways.
+    If such a setup is judged necessary, care should be taken to ensure that loops can not form.
+    See also the ``servers[].ignoreaddr`` in :ref:`gwconfigfile`.
 
 Command Line Arguments
 ----------------------
@@ -233,6 +236,8 @@ See also PVXS client_ and server_ configuration references.
 .. _server: https://mdavidsaver.github.io/pvxs/server.html#configuration
 
 Run ``pvagw --example-config -`` to see another example configuration.
+
+.. _gwconfigfile:
 
 Configuration File Keywords
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -398,6 +403,7 @@ These values are aggregated from all defined internal gateway Servers and Client
     The table is sorted by host machine with the highest bandwidth usage to lowest.
 
 .. _gwlogconfig:
+
 Log File Configuration
 ----------------------
 
