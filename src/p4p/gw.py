@@ -498,6 +498,8 @@ def jload(raw):
 def getargs():
     from argparse import ArgumentParser
     P = ArgumentParser()
+    P.set_defaults(action='run')
+
     P.add_argument('config', help='Config file')
     P.add_argument('--no-ban-local', action='store_true',
                     help='Legacy option.  Ignored')
@@ -513,6 +515,20 @@ def getargs():
                    help='Write an example configuration file and exit.  "--example-config -" writes to stdout')
     P.add_argument('--example-systemd', action='store_true',
                    help='Write an example systemd unit file and exit  "--example-systemd -" writes to stdout')
+
+    SP = P.add_subparsers()
+
+    C = SP.add_parser('asTest', help='Test Access Control permissions')
+    C.set_defaults(action='asTest', test_config=True)
+    C.add_argument('-H', '--host', default='1.2.3.4',
+                   help='Default Peer')
+    C.add_argument('-S', '--server',
+                   help='Default gateway server interface')
+    C.add_argument('-U', '--user', default='anonymous')
+    C.add_argument('-G', '--role', action='append', default=[],
+                   help='Default roles')
+    C.add_argument('input', help='Input file.')
+
     return P
 
 class App(object):
@@ -640,6 +656,10 @@ class App(object):
             access = readnproc(args, jsrv.get('access', ''), Engine, ctxt=ctxt)
             pvlist = readnproc(args, jsrv.get('pvlist', ''), PVList)
 
+            if args.action=='asTest':
+                servers[name] = (access, pvlist) # ick.  overloading the meaning of self.server..
+                continue
+
             if args.test_config:
                 continue
 
@@ -741,6 +761,53 @@ class App(object):
     def sleep(dly):
         time.sleep(dly)
 
+def asTest(app:App, args, infile):
+    from argparse import ArgumentParser
+    P = ArgumentParser()
+    P.add_argument('pv')
+    P.add_argument('--server')
+    P.add_argument('--user', default=args.user)
+    P.add_argument('--role', action='append', default=args.role)
+    P.add_argument('--host', default=args.host)
+
+    for line in infile:
+        line = line.strip()
+        if not line or line[0]=='#':
+            continue
+
+        _log.debug('asTest of %r', line)
+        try:
+            print(line)
+            test = P.parse_args(line.split())
+
+            # pick GW server interface to which this client connects
+            if test.server is None:
+                access, pvlist = next(iter(app.servers.values())) # arbitrarily pick "first"
+            else:
+                access, pvlist = app.servers[test.server]
+
+            pvlist: PVList
+            access: Engine
+
+            pv, asg, asl = pvlist.compute(test.pv.encode(), test.host)
+            if not pv:
+                print("# DENY")
+                continue
+
+            chan=TestChannel(pv)
+            access.create(chan, asg, test.user, test.host, asl, test.role)
+            if pv==test.pv:
+                print("# ALLOW ", end='', )
+            else:
+                print("# ALIAS ", pv, end='')
+
+            perms = list(chan.perm.items())
+            perms.sort()
+            print(', '.join(['%s=%s'%tup for tup in perms]))
+
+        except:
+            _log.exception('while processing %r', line)
+
 def main(args=None):
     args = getargs().parse_args(args)
 
@@ -793,7 +860,12 @@ def main(args=None):
         set_debug(logging.DEBUG)
 
     app = App(args)
-    if args.test_config:
+    if args.action=='asTest':
+        with open(args.input, 'r') as F:
+            asTest(app, args, F)
+    elif args.action!='run':
+        raise ValueError('logic error, inconsistent args.action=%r'%args)
+    elif args.test_config:
         _log.info('Configuration valid')
         for fname in args._all_config_files:
             print(fname)
