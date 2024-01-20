@@ -110,6 +110,8 @@ class TestMultipleProviders(RefTestCase):
             if name==self._name:
                 return self._pv
 
+    inst_check = (Single.__name__, SharedPV.__name__, Server.__name__, Context.__name__)
+
     def test_multiple(self):
         with Server([self.Single('one'), self.Single('two')], isolate=True) as S:
             with Context('pva', conf=S.conf(), useenv=False) as C:

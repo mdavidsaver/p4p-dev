@@ -35,6 +35,10 @@ class RefTestMixin(object):
     # set to list of names to compare.  Set to None to disable
     ref_check = ('*',)
 
+    """Ensure named python type has not net change in number of instances
+    """
+    inst_check = ()
+
     def __refs(self, refs=None):
         refs = refs or listRefs()
         _log.debug("REFS %s", refs)
@@ -42,6 +46,18 @@ class RefTestMixin(object):
         for pat in self.ref_check:
             names |= set(fnmatch.filter(refs, pat))
         return dict([(K, V) for K, V in refs.items() if K in names and V>0])
+
+    def __inst(self):
+        objs = dict({N:0 for N in self.inst_check})
+        if self.inst_check:
+            gc.collect()
+            for O in gc.get_objects():
+                N = type(O).__name__
+                if N in self.inst_check:
+                    objs[N] += 1
+            return dict(objs)
+        else:
+            return {}
 
     def setUp(self):
         self.__traceme = set()
@@ -53,6 +69,8 @@ class RefTestMixin(object):
                     self.__showLeftovers = False # only show failure once
                     self.fail('Leftovers from previous test: %s = %d'%(mustzero, self.__before[mustzero]))
 
+        self.__beforeInsts = self.__inst()
+
         super(RefTestMixin, self).setUp()
 
     def traceme(self, obj):
@@ -63,6 +81,9 @@ class RefTestMixin(object):
 
     def tearDown(self):
         super(RefTestMixin, self).tearDown()
+
+        self.assertDictEqual(self.__beforeInsts, self.__inst())
+
         if self.ref_check is not None:
             traceme = list(self.__traceme)
             del self.__traceme
