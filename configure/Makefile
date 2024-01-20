@@ -2,6 +2,8 @@ TOP=..
 
 include $(TOP)/configure/CONFIG
 
+CAT ?= cat
+
 PYTHON ?= python$(PY_VER)
 
 TARGETS = $(CONFIG_TARGETS)
@@ -16,6 +18,7 @@ include $(TOP)/configure/RULES
 
 os/CONFIG_PY.Common.$(T_A): $(TOP)/makehelper.py
 	$(PYTHON) $< $@
+	$(CAT) $@
 
 ifdef BASE_3_15
 realclean: py_clean
