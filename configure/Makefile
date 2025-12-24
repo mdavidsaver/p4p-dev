@@ -16,6 +16,9 @@ include $(TOP)/configure/RULES
 
 os/CONFIG_PY.Common.$(T_A): $(TOP)/makehelper.py
 	$(PYTHON) $< $@
+	echo "==== $@"
+	cat "$@"
+	echo "==== $@"
 
 ifdef BASE_3_15
 realclean: py_clean
