@@ -224,7 +224,7 @@ class Context(raw.Context):
 
         # use Queue instead of Event to allow KeyboardInterrupt
         done = Queue()
-        result = [TimeoutError()] * len(name)
+        result = [None] * len(name)
         ops = [None] * len(name)
 
         raw_get = super(Context, self).get
@@ -246,9 +246,10 @@ class Context(raw.Context):
                 try:
                     value, i = done.get(timeout=timeout)
                 except Empty:
+                    result[i] = TimeoutError(name[i])
                     if throw:
                         _log.debug('timeout %s after %s', name[i], timeout)
-                        raise TimeoutError()
+                        raise result[i]
                     break
                 _log.debug('got %s %r', name[i], value)
                 if throw and isinstance(value, Exception):
@@ -318,7 +319,7 @@ class Context(raw.Context):
 
         # use Queue instead of Event to allow KeyboardInterrupt
         done = Queue()
-        result = [TimeoutError()] * len(name)
+        result = [None] * len(name)
         ops = [None] * len(name)
 
         raw_put = super(Context, self).put
@@ -344,8 +345,9 @@ class Context(raw.Context):
                 try:
                     value, i = done.get(timeout=timeout)
                 except Empty:
+                    result[i] = TimeoutError(name[i])
                     if throw:
-                        raise TimeoutError()
+                        raise result[i]
                     break
                 if throw and isinstance(value, Exception):
                     raise value
@@ -388,7 +390,7 @@ class Context(raw.Context):
             try:
                 result = done.get(timeout=timeout)
             except Empty:
-                result = TimeoutError()
+                result = TimeoutError(name)
             if throw and isinstance(result, Exception):
                 raise result
 
