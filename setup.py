@@ -49,7 +49,7 @@ elif platform.system()=='Darwin':
 # Our internal interfaces with generated cython
 # are all c++, and MSVC doesn't allow extern "C" to
 # return c++ types.
-cppflags = get_config_var('CPPFLAGS') + [('__PYX_EXTERN_C','extern')]
+cppflags = get_config_var('CPPFLAGS') + [('CYTHON_EXTERN_C','extern')]
 
 exts = cythonize([
     Extension(
