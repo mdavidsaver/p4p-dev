@@ -24,6 +24,8 @@ jobs:
           py: cp38-cp38
           cy: "Cython<3.1"
           numpy: numpy==1.17.3
+          # compatibility testing only
+          pip_binary: '--no-binary epicscorelibs,pvxslibs'
           skip: true
 
         - ml: manylinux2014_x86_64
@@ -100,7 +102,7 @@ jobs:
             # pre-download for later steps
             pip download $PRE -d output \
                 --only-binary numpy,Cython \
-                --only-binary epicscorelibs,pvxslibs \
+                ${{ matrix.pip_binary || '--only-binary epicscorelibs,pvxslibs' }} \
                 "${{ matrix.cy || 'Cython' }}" \
                 "${{ matrix.numpy || 'numpy' }}" \
                 setuptools_dso pvxslibs wheel ply nose2 \
